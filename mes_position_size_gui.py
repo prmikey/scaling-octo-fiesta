@@ -1,9 +1,9 @@
-"""General CME futures position sizing GUI."""
+"""Unified CME futures zone risk calculator GUI."""
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, ttk
 
 from cme_contract_specs import (
     CONTRACT_SPECS,
@@ -15,6 +15,8 @@ from cme_contract_specs import (
 
 
 def validate_positive_float(value: str, field_name: str) -> float:
+    """Convert *value* to a positive float or raise ``ValueError``."""
+
     try:
         number = float(value)
     except ValueError as exc:  # pragma: no cover - tkinter runtime guard
@@ -29,14 +31,15 @@ def format_currency(value: float) -> str:
 
 
 class PositionSizeApp:
+    """Tkinter GUI that sizes CME futures via zone width + dollar risk."""
+
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CME Futures Position Size Calculator")
-        self.root.geometry("520x420")
+        self.root.title("CME Futures Zone Risk Calculator")
+        self.root.geometry("560x420")
         self.root.resizable(False, False)
 
         self.contract_var = tk.StringVar(value="")
-        self.mode_var = tk.StringVar(value="ticks")
 
         self._build_widgets()
         self._populate_contracts()
@@ -48,10 +51,9 @@ class PositionSizeApp:
         main.pack(fill="both", expand=True)
 
         # Contract selection
-        contract_label = ttk.Label(main, text="Contract")
-        contract_label.grid(row=0, column=0, sticky="w")
+        ttk.Label(main, text="Contract").grid(row=0, column=0, sticky="w")
         self.contract_combo = ttk.Combobox(
-            main, textvariable=self.contract_var, state="readonly", width=42
+            main, textvariable=self.contract_var, state="readonly", width=45
         )
         self.contract_combo.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 8))
         self.contract_combo.bind("<<ComboboxSelected>>", self._on_contract_change)
@@ -60,50 +62,40 @@ class PositionSizeApp:
         self.contract_info.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
         # Risk input
-        risk_label = ttk.Label(main, text="Account risk per trade ($)")
-        risk_label.grid(row=2, column=0, sticky="w")
+        ttk.Label(main, text="Account risk per trade ($)").grid(row=2, column=0, sticky="w")
         self.risk_entry = ttk.Entry(main)
         self.risk_entry.insert(0, "500")
         self.risk_entry.grid(row=2, column=1, columnspan=2, sticky="ew")
 
-        # Tick value input
-        tick_value_label = ttk.Label(main, text="Tick value ($)")
-        tick_value_label.grid(row=3, column=0, sticky="w")
-        self.tick_value_entry = ttk.Entry(main)
-        self.tick_value_entry.grid(row=3, column=1, columnspan=2, sticky="ew")
+        ttk.Label(main, text="Zone width (price)").grid(row=3, column=0, sticky="w")
+        self.zone_entry = ttk.Entry(main)
+        self.zone_entry.insert(0, "1.00")
+        self.zone_entry.grid(row=3, column=1, columnspan=2, sticky="ew")
 
-        # Stop mode frame
-        mode_frame = ttk.LabelFrame(main, text="Stop input mode")
-        mode_frame.grid(row=4, column=0, columnspan=3, pady=(12, 0), sticky="ew")
+        detail_frame = ttk.LabelFrame(main, text="Contract details")
+        detail_frame.grid(row=4, column=0, columnspan=3, pady=(12, 0), sticky="ew")
 
-        rb_ticks = ttk.Radiobutton(
-            mode_frame, text="Ticks", value="ticks", variable=self.mode_var
+        ttk.Label(detail_frame, text="Tick size").grid(row=0, column=0, sticky="w")
+        self.tick_size_var = tk.StringVar(value="-")
+        ttk.Label(detail_frame, textvariable=self.tick_size_var).grid(
+            row=0, column=1, sticky="w"
         )
-        rb_ticks.grid(row=0, column=0, padx=4, pady=4, sticky="w")
-        rb_dollars = ttk.Radiobutton(
-            mode_frame, text="Dollars", value="dollars", variable=self.mode_var
+
+        ttk.Label(detail_frame, text="Tick value").grid(row=1, column=0, sticky="w")
+        self.tick_value_var = tk.StringVar(value="-")
+        ttk.Label(detail_frame, textvariable=self.tick_value_var).grid(
+            row=1, column=1, sticky="w"
         )
-        rb_dollars.grid(row=0, column=1, padx=4, pady=4, sticky="w")
 
-        stop_ticks_label = ttk.Label(mode_frame, text="Stop size (ticks)")
-        stop_ticks_label.grid(row=1, column=0, sticky="w", padx=4)
-        self.stop_ticks_entry = ttk.Entry(mode_frame)
-        self.stop_ticks_entry.insert(0, "10")
-        self.stop_ticks_entry.grid(row=1, column=1, sticky="ew", padx=4)
+        ttk.Label(detail_frame, text="Contract unit").grid(row=2, column=0, sticky="w")
+        self.contract_unit_var = tk.StringVar(value="-")
+        ttk.Label(detail_frame, textvariable=self.contract_unit_var).grid(
+            row=2, column=1, sticky="w"
+        )
 
-        stop_dollars_label = ttk.Label(mode_frame, text="Stop size ($)")
-        stop_dollars_label.grid(row=2, column=0, sticky="w", padx=4)
-        self.stop_dollars_entry = ttk.Entry(mode_frame, state="disabled")
-        self.stop_dollars_entry.insert(0, "50")
-        self.stop_dollars_entry.grid(row=2, column=1, sticky="ew", padx=4)
-
-        self.mode_var.trace_add("write", self._switch_mode)
-
-        # Calculate button
         calc_button = ttk.Button(main, text="Calculate", command=self.calculate)
         calc_button.grid(row=5, column=0, columnspan=3, pady=(12, 0), sticky="ew")
 
-        # Result display
         self.result_text = tk.Text(main, height=8, width=50, state="disabled")
         self.result_text.grid(row=6, column=0, columnspan=3, pady=(12, 0), sticky="nsew")
 
@@ -121,29 +113,16 @@ class PositionSizeApp:
         self._on_contract_change()
 
     # ------------------------------------------------------------------
-    def _switch_mode(self, *_args) -> None:
-        ticks_selected = self.mode_var.get() == "ticks"
-        self.stop_ticks_entry.configure(state="normal" if ticks_selected else "disabled")
-        self.stop_dollars_entry.configure(state="disabled" if ticks_selected else "normal")
-
-    # ------------------------------------------------------------------
     def _on_contract_change(self, *_args) -> None:
         spec = self._get_selected_spec()
         if not spec:
             return
-        self._prefill_tick_value(spec)
-        tick_info = (
-            f"{spec.symbol}: {spec.name}\n"
-            f"Group: {spec.product_group} • Tick size: {spec.tick_size:g} • "
-            f"Tick value: {format_currency(spec.tick_value)}\n"
-            f"Contract unit: {spec.contract_unit}"
-        )
-        self.contract_info.configure(text=tick_info)
 
-    # ------------------------------------------------------------------
-    def _prefill_tick_value(self, spec: ContractSpec) -> None:
-        self.tick_value_entry.delete(0, tk.END)
-        self.tick_value_entry.insert(0, f"{spec.tick_value}")
+        tick_info = f"{spec.symbol}: {spec.name}\nGroup: {spec.product_group}"
+        self.contract_info.configure(text=tick_info)
+        self.tick_size_var.set(f"{spec.tick_size:g}")
+        self.tick_value_var.set(format_currency(spec.tick_value))
+        self.contract_unit_var.set(spec.contract_unit)
 
     # ------------------------------------------------------------------
     def _get_selected_spec(self) -> ContractSpec | None:
@@ -164,25 +143,10 @@ class PositionSizeApp:
             account_risk = validate_positive_float(
                 self.risk_entry.get(), "Account risk"
             )
-            tick_value = validate_positive_float(
-                self.tick_value_entry.get(), "Tick value"
-            )
+            zone_width = validate_positive_float(self.zone_entry.get(), "Zone width")
 
-            if self.mode_var.get() == "ticks":
-                stop_ticks = validate_positive_float(
-                    self.stop_ticks_entry.get(), "Stop size (ticks)"
-                )
-                per_contract_risk = stop_ticks * tick_value
-                extra_info = f"Stop size: {stop_ticks:.2f} ticks"
-            else:
-                stop_dollars = validate_positive_float(
-                    self.stop_dollars_entry.get(), "Stop size ($)"
-                )
-                per_contract_risk = stop_dollars
-                approx_ticks = stop_dollars / tick_value
-                extra_info = (
-                    f"Stop size: {format_currency(stop_dollars)} (≈ {approx_ticks:.2f} ticks)"
-                )
+            ticks = zone_width / spec.tick_size
+            per_contract_risk = ticks * spec.tick_value
 
             contracts = int(account_risk // per_contract_risk) if per_contract_risk else 0
             used_risk = contracts * per_contract_risk
@@ -190,7 +154,7 @@ class PositionSizeApp:
 
             if contracts <= 0:
                 raise ValueError(
-                    "Account risk is too small for one contract with the chosen stop size."
+                    "Account risk is too small for one contract with the chosen zone width."
                 )
         except ValueError as exc:
             messagebox.showerror("Input error", str(exc))
@@ -198,11 +162,11 @@ class PositionSizeApp:
 
         result_lines = [
             f"Contract: {spec.symbol} – {spec.name}",
-            f"Contracts: {contracts}",
+            f"Zone width: {zone_width:.4f} ({ticks:.2f} ticks)",
             f"Per-contract risk: {format_currency(per_contract_risk)}",
+            f"Contracts: {contracts}",
             f"Total risk: {format_currency(used_risk)}",
             f"Unused risk: {format_currency(unused_risk)}",
-            extra_info,
         ]
 
         self.result_text.configure(state="normal")
@@ -212,10 +176,8 @@ class PositionSizeApp:
 
     # ------------------------------------------------------------------
     def run(self) -> None:
-        self._switch_mode()
         self.root.mainloop()
 
 
 if __name__ == "__main__":
     PositionSizeApp().run()
-
